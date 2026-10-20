@@ -5310,6 +5310,7 @@ export class Daemon {
             if (tools.length > 0 || requesterServers.length > 0) {
               const token = this.mcp.register({
                 agentId: agent.id,
+                sessionKey,
                 platform,
                 ...(integrationId ? { integrationId } : {}),
                 ...(transportScope ? { transportScope } : {}),
@@ -10986,7 +10987,7 @@ export class Daemon {
 
   /** Identity of the human behind the live turn. Scheduled and agent turns have no requester. */
   private requesterIdentityFor(ctx: SessionContext) {
-    const live = this.liveTurn(ctx)
+    const live = ctx.sessionKey ? this.activeGateEntries.get(ctx.sessionKey) : this.liveTurn(ctx)
     const msg = live?.msg
     if (!msg || msg.source !== 'user' || msg.sender.isBot || !msg.sender.id) return null
     const integrationId = live.integrationId ?? ctx.integrationId
