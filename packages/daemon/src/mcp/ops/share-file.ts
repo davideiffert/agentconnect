@@ -227,7 +227,7 @@ export async function shareFile(
     charge.release()
     if (outcome.reason === 'indeterminate') {
       throw new Error(
-        'shareFile: the upload timed out and MAY still have been delivered. Do NOT retry; say the file may have gone through instead.'
+        'shareFile: the upload timed out and MAY still have been delivered; do NOT retry; say the file may have gone through instead.'
       )
     }
     const refusal = UPLOAD_REFUSALS[outcome.reason](platformLabel(target.platform))
