@@ -13189,6 +13189,7 @@ export class Daemon {
         // Ours by app identity, but not provably authored by a specific agent (a
         // streaming post, an old daemon's metadata-less reply, chrome, or a shared bot
         // with no exact claim). §4 fails closed: recorded (step 1), never routed.
+        if (msg.externalBotContext) await this.admitExternalBotContext(msg, srcIntegrationIds)
         this.log.debug(`routing: unverified AgentConnect message ${msg.msgId} is transcript-only`)
         return { kind: 'rejected', reason: 'suppressed' }
       }
@@ -13262,6 +13263,37 @@ export class Daemon {
       primary: true
     })
     return outcome.kind === 'rejected' ? (dispatchedPeer ?? outcome) : outcome
+  }
+
+  /** Admit a same-token post to the session a human message here would use, without dispatching a turn. */
+  private async admitExternalBotContext(msg: NormalizedMessage, srcIntegrationIds?: string[]): Promise<void> {
+    const humanEquivalent = { ...msg, sender: { ...msg.sender, isBot: false } }
+    const rules = this.mergedRulesForSource(srcIntegrationIds)
+    const threadOwner = await this.prefetchedThreadOwner(humanEquivalent)
+    const target = routeRules(humanEquivalent, rules, () => threadOwner)
+    if (!target) {
+      this.log.debug(`routing: external bot context ${msg.msgId} has no matching session`)
+      return
+    }
+    const coordinate = await this.sessionCoordinateFor(target.agentId, target.integrationId, msg)
+    const contextMsg = coordinate === undefined ? msg : { ...msg, sessionThread: coordinate }
+    const { ts } = transcriptCoords(contextMsg)
+    const physicalThread = physicalThreadOf(contextMsg)
+    const key = sessionKey(msg.platform, msg.channel, sessionThreadOf(contextMsg), target.agentId, msg.transportScope)
+    const mention = attachmentMention(msg.attachments)
+    await this.store.appendTranscript({
+      channel: transcriptChannelKey(msg.channel, msg.transportScope),
+      thread: physicalThread,
+      ts,
+      sender: msg.sender.id,
+      orgAgentId: target.agentId,
+      admission: { agentId: target.agentId, sessionKey: key },
+      kind: 'text',
+      text: mention ? `${msg.text}\n${mention}`.trim() : msg.text,
+      ...(msg.platformTimeMs ? { eventTimeUs: msg.platformTimeMs * 1000 } : {}),
+      ...(msg.quoted?.text ? { quoted: msg.quoted } : {})
+    })
+    this.log.debug(`routing: external bot context ${msg.msgId} admitted to ${key} without activation`)
   }
 
   /** Step 6 for one ladder target: its coordinate, drain and mute fences, promotion, then dispatch. */
