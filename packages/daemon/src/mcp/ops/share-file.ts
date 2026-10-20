@@ -52,12 +52,12 @@ export interface ShareTurnTarget {
 export type ShareTargetRefusal = 'no-turn' | 'no-conversation' | 'headless'
 export type ShareTargetResult = ({ ok: true } & ShareTurnTarget) | { ok: false; reason: ShareTargetRefusal }
 
-/** The resolved, fenced, sniffed workspace image — or why it cannot be shared. */
+/** The resolved, fenced, sniffed workspace file, or why it cannot be shared. */
 export type ShareReadResult =
   | { ok: true; bytes: Buffer; name: string; mimeType: string; sha256: string }
   | {
       ok: false
-      reason: 'sandboxed' | 'not-found' | 'escape' | 'not-image' | 'gif' | 'too-large'
+      reason: 'sandboxed' | 'not-found' | 'escape' | 'unsupported-type' | 'gif' | 'too-large'
       /** Bound or detail the refusal names (e.g. the per-file cap). */
       detail?: string
     }
@@ -82,8 +82,8 @@ export interface ShareFileDeps extends GatewayDeps {
   /** The active turn's trusted post target — absent outside a live daemon. */
   shareTarget?: (ctx: SessionContext) => ShareTargetResult
   /** Resolve + fence + read + sniff a workspace-relative path (docs §4): single-shot read,
-   *  images only by magic bytes, name and MIME from the sniffed type. */
-  readWorkspaceImage?: (ctx: SessionContext, path: string) => Promise<ShareReadResult>
+   *  name and MIME from the sniffed type. */
+  readWorkspaceFile?: (ctx: SessionContext, path: string) => Promise<ShareReadResult>
   /** Synchronous per-turn byte reservation (docs §5) — charge before the upload, release on
    *  failure. Synchronous so concurrent tool calls cannot race past the budget. */
   chargeShareBudget?: (ctx: SessionContext, bytes: number) => { ok: true; release: () => void } | { ok: false }
@@ -91,7 +91,7 @@ export interface ShareFileDeps extends GatewayDeps {
    *  bytes fit the transcript cap — the bytes themselves for console replay. */
   recordShare?: (
     ctx: SessionContext,
-    row: { ts: string; text: string; image?: { name: string; mimeType: string; data: Buffer } }
+    row: { ts: string; text: string; file?: { name: string; mimeType: string; data: Buffer } }
   ) => Promise<void>
   now: () => number
 }
@@ -111,7 +111,7 @@ const READ_REFUSALS: Record<Exclude<ShareReadResult, { ok: true }>['reason'], (p
   'not-found': (path) => `shareFile: no file at "${path}" in this workspace.`,
   escape: (path) =>
     `shareFile: "${path}" is not a workspace-relative path — only files inside the workspace can be shared.`,
-  'not-image': (path) => `shareFile: "${path}" is not a PNG, JPEG, or WEBP image — only those can be shared.`,
+  'unsupported-type': (path) => `shareFile: "${path}" is not a supported image or document type.`,
   gif: () =>
     'shareFile: GIF is not supported yet — only PNG, JPEG, or WEBP. Convert it first; an animated GIF would lose its animation anyway.',
   'too-large': (path, detail) => `shareFile: "${path}" is over the per-file limit${detail ? ` (${detail})` : ''}.`
@@ -196,8 +196,8 @@ export async function shareFile(
     )
   }
 
-  if (!deps.readWorkspaceImage) throw new Error('shareFile is not available in this environment.')
-  const read = await deps.readWorkspaceImage(ctx, path)
+  if (!deps.readWorkspaceFile) throw new Error('shareFile is not available in this environment.')
+  const read = await deps.readWorkspaceFile(ctx, path)
   if (!read.ok) throw new Error(READ_REFUSALS[read.reason](path, read.detail))
 
   const charge = deps.chargeShareBudget?.(ctx, read.bytes.byteLength) ?? { ok: true as const, release: () => {} }
@@ -227,7 +227,7 @@ export async function shareFile(
     charge.release()
     if (outcome.reason === 'indeterminate') {
       throw new Error(
-        'shareFile: the upload timed out and MAY still have been delivered — do NOT retry; say the image may have gone through instead.'
+        'shareFile: the upload timed out and MAY still have been delivered. Do NOT retry; say the file may have gone through instead.'
       )
     }
     const refusal = UPLOAD_REFUSALS[outcome.reason](platformLabel(target.platform))
@@ -245,7 +245,7 @@ export async function shareFile(
     deps.recordShare?.(ctx, {
       ts,
       text: escaped ? `${escaped}\n${marker}` : marker,
-      image: { name: read.name, mimeType: read.mimeType, data: read.bytes }
+      file: { name: read.name, mimeType: read.mimeType, data: read.bytes }
     }) ?? Promise.resolve()
   )
     .then(() => true)
@@ -255,7 +255,7 @@ export async function shareFile(
     ...(outcome.warning ? [`This send partly failed: ${outcome.warning}.`] : []),
     ...(recorded
       ? []
-      : ['The image was posted, but recording it in the transcript failed — the console may not show it.'])
+      : ['The file was posted, but recording it in the transcript failed. The console may not show it.'])
   ]
   return {
     ok: true,

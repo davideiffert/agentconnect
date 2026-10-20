@@ -485,7 +485,7 @@ describe('executeTool: sendMessage (channel post)', () => {
       const d = makeDeps({
         gatewayFor: () => gw,
         shareTarget: () => target,
-        readWorkspaceImage: async (_c, path) => (path === 'out/chart.png' ? image : { ok: false, reason: 'not-found' }),
+        readWorkspaceFile: async (_c, path) => (path === 'out/chart.png' ? image : { ok: false, reason: 'not-found' }),
         chargeShareBudget: vi.fn(() => ({ ok: true as const, release: vi.fn() })),
         recordShare: async (_c, row) => {
           shares.push(row)
@@ -521,7 +521,32 @@ describe('executeTool: sendMessage (channel post)', () => {
         expect.objectContaining({
           ts: 'ts-42',
           text: expect.stringContaining('[shared: out/chart.png (image/png, 8 bytes, sha256:aaaaaaaaaaaaaaaa)]'),
-          image: expect.objectContaining({ mimeType: 'image/png' })
+          file: expect.objectContaining({ mimeType: 'image/png' })
+        })
+      ])
+    })
+
+    it('posts a sniffed document through the same trusted target and records its provenance', async () => {
+      const document = {
+        ok: true as const,
+        bytes: Buffer.from('%PDF-1.7\n'),
+        name: 'guide.pdf',
+        mimeType: 'application/pdf',
+        sha256: 'b'.repeat(64)
+      }
+      const { d, gw, shares } = shareDeps({ readWorkspaceFile: async () => document })
+      await executeTool(ctx, 'shareFile', { path: 'out/guide.docx' }, d)
+      expect(gw.uploadFile).toHaveBeenCalledWith(
+        'C_CURRENT',
+        { bytes: document.bytes, name: 'guide.pdf', mimeType: 'application/pdf' },
+        undefined,
+        { thread: '111.1', replyTo: 41 },
+        authorIdentity
+      )
+      expect(shares).toEqual([
+        expect.objectContaining({
+          text: expect.stringContaining('[shared: out/guide.docx (application/pdf, 9 bytes'),
+          file: expect.objectContaining({ name: 'guide.pdf', mimeType: 'application/pdf' })
         })
       ])
     })
@@ -568,13 +593,13 @@ describe('executeTool: sendMessage (channel post)', () => {
 
     it('refuses before any file I/O when the platform cannot host files', async () => {
       const reads = vi.fn(async () => image)
-      const { d } = shareDeps({ gatewayFor: () => fakeGateway(), readWorkspaceImage: reads })
+      const { d } = shareDeps({ gatewayFor: () => fakeGateway(), readWorkspaceFile: reads })
       await expect(executeTool(ctx, 'shareFile', { path: 'out/chart.png' }, d)).rejects.toThrow(/cannot host files/)
       expect(reads).not.toHaveBeenCalled()
     })
 
     it('names GIF in its refusal — a plausible find-me-images result, not a generic non-image', async () => {
-      const { d } = shareDeps({ readWorkspaceImage: async () => ({ ok: false, reason: 'gif' }) })
+      const { d } = shareDeps({ readWorkspaceFile: async () => ({ ok: false, reason: 'gif' }) })
       await expect(executeTool(ctx, 'shareFile', { path: 'anim.gif' }, d)).rejects.toThrow(/GIF is not supported/)
     })
 
@@ -608,7 +633,7 @@ describe('executeTool: sendMessage (channel post)', () => {
 
     it('refuses an over-long caption up front, before anything is read or sent', async () => {
       const reads = vi.fn(async () => image)
-      const { d } = shareDeps({ readWorkspaceImage: reads })
+      const { d } = shareDeps({ readWorkspaceFile: reads })
       await expect(
         executeTool(ctx, 'shareFile', { path: 'out/chart.png', caption: 'x'.repeat(1001) }, d)
       ).rejects.toThrow(/1000 characters/)

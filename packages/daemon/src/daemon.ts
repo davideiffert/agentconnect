@@ -274,7 +274,8 @@ import { StoreRetentionSweeper, resolveStoreRetentionSettings } from './store/re
 import { TranscriptRecorder, type TranscriptEvent } from './session/transcript-recorder.js'
 import { TerminalOutputFolder } from './session/terminal-output-folder.js'
 import { WorkBoundary } from './messages/message-boundary.js'
-import { attachmentMention, sniffImageMimeType } from './session/attachment-block.js'
+import { attachmentMention } from './session/attachment-block.js'
+import { sharedFileName, sniffSharedFile } from './files/sniff.js'
 import { McpControlServer } from './mcp/control-server.js'
 import { ADMIN_MCP_SERVER_NAME, RemoteWebchatGrantManager } from './mcp/remote-webchat-grant.js'
 import type { CodeHostEffectReq, MessageGateway, SessionContext } from './mcp/ops.js'
@@ -4516,23 +4517,20 @@ export class Daemon {
         if (!p || p.outputSuppressed || !this.toolTurnRunnable(ctx)) return undefined
         return this.turnSurfaces.exact(p.plan.platform)?.imageUploader?.(p)
       },
-      readWorkspaceImage: async (ctx, rel): Promise<ShareReadResult> => {
+      readWorkspaceFile: async (ctx, rel): Promise<ShareReadResult> => {
         const cap = cfg.limits.maxOutboundFileBytes ?? cfg.limits.maxAttachmentBytes
         const read = await this.readShareWorkspaceFile(ctx, rel, cap)
         if (!read.ok) return read
         const bytes = read.bytes
-        // Sniff + name + digest: outbound name and MIME come from the SNIFFED bytes, never the model-supplied path (§4) — Discord renders by extension alone.
-        const sniffed = sniffImageMimeType(bytes)
+        // Sniff + name + digest: outbound name and MIME come from the bytes, never a model-supplied MIME (§4). Discord renders by extension alone.
+        const sniffed = sniffSharedFile(bytes, rel)
         if (!sniffed) {
-          const head = bytes.subarray(0, 6).toString('latin1')
-          // GIF gets a refusal that NAMES it (§4): sendPhoto would silently strip its animation.
-          if (head === 'GIF87a' || head === 'GIF89a') return { ok: false, reason: 'gif' }
-          return { ok: false, reason: 'not-image' }
+          return { ok: false, reason: 'unsupported-type' }
         }
-        const ext = sniffed === 'image/png' ? 'png' : sniffed === 'image/jpeg' ? 'jpg' : 'webp'
-        const stem = basename(rel).replace(/\.[A-Za-z0-9]+$/, '') || 'image'
+        // GIF gets a refusal that names it: platform image paths may silently strip its animation.
+        if (sniffed === 'image/gif') return { ok: false, reason: 'gif' }
         const sha256 = createHash('sha256').update(bytes).digest('hex')
-        return { ok: true, bytes, name: `${stem}.${ext}`, mimeType: sniffed, sha256 }
+        return { ok: true, bytes, name: sharedFileName(rel, sniffed), mimeType: sniffed, sha256 }
       },
       // A console turn's image is bounded by the image-processing limit, not the IM per-file cap (webchat-generated-images.md §5).
       readWorkspaceSharedImage: async (ctx, rel) => {
@@ -4592,7 +4590,7 @@ export class Daemon {
       },
       // read*File (inbound-file-attachments.md §2): a downloaded non-image binary lands under
       // `uploads/` at the session's working root, so the agent's own tools can open it. The same
-      // location resolution as readWorkspaceImage above; the write goes through the WorkspaceFs
+      // location resolution as readWorkspaceFile above; the write goes through the WorkspaceFs
       // seam so a cluster agent's sandbox volume is reached over the fd-anchored channel.
       saveAttachment: async (ctx, name, bytes): Promise<SaveAttachmentResult> => {
         const scope = createWorkspaceScope({
@@ -4641,11 +4639,11 @@ export class Daemon {
         // Provenance row (§4). The bytes ride along exactly as an inbound image's do when
         // they fit the transcript cap, so the console can render what the agent shared.
         const image =
-          row.image && row.image.data.byteLength <= WEBCHAT_IMAGE_MAX_BYTES
+          row.file?.mimeType.startsWith('image/') && row.file.data.byteLength <= WEBCHAT_IMAGE_MAX_BYTES
             ? SessionImageAttachmentSchema.safeParse({
-                name: row.image.name,
-                mimeType: row.image.mimeType,
-                data: row.image.data.toString('base64')
+                name: row.file.name,
+                mimeType: row.file.mimeType,
+                data: row.file.data.toString('base64')
               })
             : undefined
         await this.store.appendTranscript({
