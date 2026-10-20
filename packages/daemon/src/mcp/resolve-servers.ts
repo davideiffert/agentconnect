@@ -4,6 +4,16 @@ import type { McpServerDef } from '../config/config-schema.js'
 
 export { RESERVED_MCP_SERVER_NAME }
 
+/** Add the daemon's trusted session binding to one operator-approved stdio child. */
+export function withRequesterIdentity(server: McpServer, endpoint: string, token: string): McpServer {
+  if (!('command' in server)) return server
+  const env = server.env.filter((entry) => entry.name !== 'AC_MCP_ENDPOINT' && entry.name !== 'AC_MCP_TOKEN')
+  return {
+    ...server,
+    env: [...env, { name: 'AC_MCP_ENDPOINT', value: endpoint }, { name: 'AC_MCP_TOKEN', value: token }]
+  }
+}
+
 /**
  * Resolve an agent's enabled MCP-server names against the daemon's configured
  * definitions, producing the ACP `McpServer` entries to attach at

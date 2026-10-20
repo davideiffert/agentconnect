@@ -351,7 +351,7 @@ import {
 } from './workspace/git-injection.js'
 import { configureWorkspaceGitOrigins, permitsNoHttpsOrigin } from './workspace/git-origin-policy.js'
 import { buildMcpServers, buildSandboxMcpServers, type McpStdioServer } from './mcp/inject.js'
-import { resolveAgentMcpServers, RESERVED_MCP_SERVER_NAME } from './mcp/resolve-servers.js'
+import { resolveAgentMcpServers, RESERVED_MCP_SERVER_NAME, withRequesterIdentity } from './mcp/resolve-servers.js'
 import { toolContextFingerprint } from './session/turn/tool-context.js'
 import { DAEMON_VERSION } from './version.js'
 import { McpAppsHost, splitAppToolName } from './mcp/apps/host.js'
@@ -4648,6 +4648,7 @@ export class Daemon {
       deliverJoinOutcome: (ctx, outcome) => void this.deliverJoinOutcome(ctx, outcome),
       // The read and write rules (assistant-mode.md §5.5): who is asking on the live turn, and the lookups that judge them.
       readAskers: async (ctx) => this.readAskersFor(ctx),
+      requesterIdentityFor: (ctx) => this.requesterIdentityFor(ctx),
       readLookups: (agentId) => this.placeMembers.lookupsFor(agentId),
       attachmentReaderFor: (integrationId) =>
         this.connForIntegration(integrationId) ??
@@ -5303,7 +5304,10 @@ export class Daemon {
           mcpServers: () => {
             for (const warning of warnings) this.log.warn(warning)
             const servers: McpServer[] = []
-            if (tools.length > 0) {
+            const requesterServers = configuredServers.filter(
+              (server) => 'command' in server && this.mcpDefsForAgent(agent.id)[server.name]?.requesterIdentity === true
+            )
+            if (tools.length > 0 || requesterServers.length > 0) {
               const token = this.mcp.register({
                 agentId: agent.id,
                 platform,
@@ -5330,7 +5334,13 @@ export class Daemon {
                     }
                   : {})
               })
-              servers.push(...this.mcpToolServerSpec(token, agent, sessionKey))
+              const [bridge] = this.mcpToolServerSpec(token, agent, sessionKey)
+              if (tools.length > 0 && bridge) servers.push(bridge)
+              const endpoint = bridge?.env.find((entry) => entry.name === 'AC_MCP_ENDPOINT')?.value
+              for (const server of requesterServers) {
+                if (!endpoint) continue
+                Object.assign(server, withRequesterIdentity(server, endpoint, token))
+              }
             }
             servers.push(
               ...configuredServers.map((server) =>
@@ -10972,6 +10982,27 @@ export class Daemon {
   /** The session's live turn, the same entry the bridge's turn gate admits tools against; it ends with the turn. */
   private liveTurn(ctx: SessionContext): QueueEntry | undefined {
     return this.activeGateEntries.get(this.sessionKeyOf(ctx))
+  }
+
+  /** Identity of the human behind the live turn. Scheduled and agent turns have no requester. */
+  private requesterIdentityFor(ctx: SessionContext) {
+    const live = this.liveTurn(ctx)
+    const msg = live?.msg
+    if (!msg || msg.source !== 'user' || msg.sender.isBot || !msg.sender.id) return null
+    const integrationId = live.integrationId ?? ctx.integrationId
+    const connection = integrationId ? this.anyConnForIntegration(integrationId) : undefined
+    const workspaceId =
+      msg.platform === 'slack' && connection && 'workspaceId' in connection
+        ? (connection as { workspaceId(): string }).workspaceId()
+        : undefined
+    return {
+      platform: msg.platform,
+      ...(integrationId ? { integrationId } : {}),
+      ...(workspaceId ? { teamId: workspaceId } : {}),
+      userId: msg.sender.id,
+      channel: msg.channel,
+      thread: msg.thread || msg.msgId
+    }
   }
 
   /** send-message-guide.md §9.3: record an admitted session message on the session it reached, with its reply obligation. */

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { resolveAgentMcpServers, RESERVED_MCP_SERVER_NAME } from '../src/mcp/resolve-servers.js'
+import { resolveAgentMcpServers, RESERVED_MCP_SERVER_NAME, withRequesterIdentity } from '../src/mcp/resolve-servers.js'
 import { McpServerDefSchema, type McpServerDef } from '../src/config/config-schema.js'
 
 const defs: Record<string, McpServerDef> = {
@@ -72,5 +72,35 @@ describe('resolveAgentMcpServers', () => {
   it('includes http/sse optimistically when the runtime was never probed', () => {
     const servers = resolveAgentMcpServers({ enabled: ['search', 'legacy'], defs, caps: undefined })
     expect(servers.map((s) => s.name)).toEqual(['search', 'legacy'])
+  })
+
+  it('accepts requester identity only for a local stdio server', () => {
+    expect(McpServerDefSchema.parse({ command: 'mcp-local', requesterIdentity: true }).requesterIdentity).toBe(true)
+    expect(
+      McpServerDefSchema.safeParse({ transport: 'http', url: 'http://localhost:9000/mcp', requesterIdentity: true })
+        .success
+    ).toBe(false)
+  })
+
+  it('injects one trusted requester binding and replaces operator-supplied copies', () => {
+    const [server] = resolveAgentMcpServers({
+      enabled: ['files'],
+      defs: {
+        files: McpServerDefSchema.parse({
+          command: 'mcp-files',
+          env: [
+            { name: 'AC_MCP_TOKEN', value: 'forged' },
+            { name: 'KEEP', value: 'yes' }
+          ]
+        })
+      }
+    })
+    expect(withRequesterIdentity(server!, '/trusted.sock', 'trusted')).toMatchObject({
+      env: [
+        { name: 'KEEP', value: 'yes' },
+        { name: 'AC_MCP_ENDPOINT', value: '/trusted.sock' },
+        { name: 'AC_MCP_TOKEN', value: 'trusted' }
+      ]
+    })
   })
 })

@@ -29,7 +29,15 @@ export interface IpcCallToolReq {
   callId?: string
 }
 
-export type IpcRequest = IpcListToolsReq | IpcCallToolReq
+/** Trusted requester lookup for an operator-approved local MCP child. It is an
+ * IPC operation, not a model-visible tool. */
+export interface IpcRequesterIdentityReq {
+  id: number
+  token: string
+  op: 'requesterIdentity'
+}
+
+export type IpcRequest = IpcListToolsReq | IpcCallToolReq | IpcRequesterIdentityReq
 
 /** Private-broker-only startup authentication. Shared MCP control sockets never
  * send this operation; it binds one persistent bridge connection to one cell
