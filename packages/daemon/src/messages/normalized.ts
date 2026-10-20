@@ -128,6 +128,9 @@ export interface NormalizedMessage extends Omit<
   channelIntake?: ChannelIntake
   /** This independent store may lack observations that the relay did not forward. */
   forwardedHistory?: boolean
+  /** A Slack post made with this integration's bot token by a system outside AgentConnect.
+   *  Recorded into the matching session as context, but never admitted as a turn. */
+  externalBotContext?: true
 }
 
 /**

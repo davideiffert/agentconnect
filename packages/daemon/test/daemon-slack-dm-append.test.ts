@@ -61,13 +61,15 @@ async function boot(mode: 'createNew' | 'append') {
   }
   let onUpdate!: (sid: string, update: unknown) => void
   let turns = 0
+  const prompts: string[] = []
   const newSession = vi.fn(async () => `acp-${newSession.mock.calls.length}`)
   const host = {
     __started: true,
     start: vi.fn(async () => {}),
     newSession,
     hasSession: () => true,
-    prompt: vi.fn(async (sid: string) => {
+    prompt: vi.fn(async (sid: string, blocks: { text?: string }[]) => {
+      prompts.push(blocks.map((block) => block.text ?? '').join('\n'))
       turns++
       onUpdate(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `answer ${turns}` } })
       return { stopReason: 'end_turn' }
@@ -117,14 +119,53 @@ async function boot(mode: 'createNew' | 'append') {
         ...(threadTs ? { thread_ts: threadTs } : {})
       }
     })
+  const sameTokenPost = async (ts: string, text: string, threadTs?: string) =>
+    await handlers.get('message')!({
+      message: {
+        type: 'message',
+        subtype: 'bot_message',
+        channel: 'D1',
+        channel_type: 'im',
+        user: 'U_FAKE_BOT',
+        bot_id: 'B_FAKE_BOT',
+        text,
+        ts,
+        ...(threadTs ? { thread_ts: threadTs } : {})
+      }
+    })
   const answers = () => posts.filter((p) => p.text.startsWith('answer '))
-  return { daemon, handlers, host, posts, answers, dm, store, scope, sessionThreads }
+  return { daemon, handlers, host, posts, answers, dm, sameTokenPost, prompts, store, scope, sessionThreads }
 }
 
 // A new chat opens after the conversation's current coordinate was minted, as it does live.
 const threadRootAfterNow = (): string => `${Math.floor(Date.now() / 1000) + 5}.000500`
 
 describe('a Slack DM on append', () => {
+  it('keeps an external same-token post as context without starting a turn', async () => {
+    const { daemon, host, answers, dm, sameTokenPost, prompts, store } = await boot('append')
+
+    await dm('1720000000.000100', 'first')
+    await vi.waitFor(() => expect(answers()).toHaveLength(1))
+    await sameTokenPost(
+      '1720000000.000200',
+      'Hub reminder: <https://hub.test/tasks/5ea0a980-2f51-545c-8a2a-6c138c2b3dd4|Confirm volunteer lunch headcount>'
+    )
+    await vi.waitFor(async () =>
+      expect(await store.db.prepare("SELECT text FROM transcript WHERE ts = '1720000000.000200'").get()).toMatchObject({
+        text: expect.stringContaining('Posted as you by another system')
+      })
+    )
+    expect(host.prompt).toHaveBeenCalledTimes(1)
+    expect(answers()).toHaveLength(1)
+
+    await dm('1720000000.000300', "what task did the Hub just remind me about? don't change anything")
+    await vi.waitFor(() => expect(answers()).toHaveLength(2))
+    expect(prompts[1]).toContain('Posted as you by another system at 2024-07-03T09:46:40.000Z:')
+    expect(prompts[1]).toContain('5ea0a980-2f51-545c-8a2a-6c138c2b3dd4')
+    expect(prompts[1]).toContain('Confirm volunteer lunch headcount')
+    await daemon.stop()
+  })
+
   it('keys top-level and in-thread messages onto one session and answers in each physical thread', async () => {
     const { daemon, host, answers, dm, sessionThreads } = await boot('append')
 

@@ -307,6 +307,21 @@ export interface SlackStatusOptions {
  *  `SlackPostOptions.chrome`). Exported so the backfill can recognize it. */
 export const SLACK_CHROME_EVENT_TYPE = 'agentconnect_chrome'
 
+/** AgentConnect marks every conversational or chrome post it owns. A same-token
+ *  post without one of these markers came from another system. */
+function isAgentConnectSlackPost(message: Pick<SlackMessageEvent, 'metadata'>): boolean {
+  return (
+    message.metadata?.event_type === 'agentconnect_thread_event' ||
+    message.metadata?.event_type === SLACK_CHROME_EVENT_TYPE
+  )
+}
+
+function externalBotContextText(message: Pick<SlackMessageEvent, 'text' | 'ts'>): string {
+  const at = slackTsToMs(message.ts)
+  const timestamp = at === undefined ? message.ts : new Date(at).toISOString()
+  return `Posted as you by another system at ${timestamp}:\n${message.text ?? ''}`.trimEnd()
+}
+
 function slackMessageMetadata(
   options?: Pick<SlackPostOptions, 'agentAuthorId' | 'chrome' | 'chromeOwnerAgentId' | 'response'>
 ) {
@@ -1088,6 +1103,10 @@ export class SlackConnection implements PlatformConnection {
   /** Chrome streams still open, keyed by MESSAGE (see `streamKey`). An entry disappears the
    *  moment the stream settles — by our stop, or by Slack proving it already stopped. */
   private openStreams = new Set<string>()
+  /** Recent Slack ids returned by our own sends. Metadata is the durable marker; these
+   *  cover send shapes such as file shares that Slack cannot stamp with metadata. */
+  private ownMessageTs = new Set<string>()
+  private ownFileIds = new Set<string>()
   /** Settle+stop pairs Slack has not resolved, retried on a backoff after the owning turn is
    *  gone. Without an owner here a transient double failure leaves the row working forever. */
   private owedStops = new Map<string, { timer: NodeJS.Timeout }>()
@@ -1144,8 +1163,15 @@ export class SlackConnection implements PlatformConnection {
       return
     }
     const deliver = (ev: SlackMessageEvent, kind: string, envelope: unknown) => {
-      if (isSlackSystemMessage(ev) || ev.user === this.botUserId || ev.bot_id === this.botId) return
-      const msg = normalizeSlackEvent(this.withAssistantThread(ev), { traceId: this.deps.newTraceId() })
+      if (isSlackSystemMessage(ev)) return
+      const fromThisBot = ev.user === this.botUserId || ev.bot_id === this.botId
+      const ownedFile = ev.files?.some((file) => file.id && this.ownFileIds.has(file.id)) === true
+      if (fromThisBot && (isAgentConnectSlackPost(ev) || this.ownMessageTs.has(ev.ts) || ownedFile)) return
+      const contextualized = fromThisBot ? { ...ev, text: externalBotContextText(ev) } : ev
+      const msg = normalizeSlackEvent(this.withAssistantThread(contextualized), {
+        traceId: this.deps.newTraceId()
+      }) as NormalizedMessage
+      if (fromThisBot) msg.externalBotContext = true
       // The envelope says the conversation is shared with another organization (assistant-mode.md §5.3).
       if (slackEnvelopeExternallyShared(envelope)) msg.externallyShared = true
       log?.debug(
@@ -1560,6 +1586,7 @@ export class SlackConnection implements PlatformConnection {
           result = await this.postIfThreadExists(channel, threadTs, plain)
         }
       }
+      if (result?.ts) this.rememberOwnMessageTs(result.ts)
       await this.postPermissionUpdateCard(channel, threadTs)
       return result ? { ...result, ...(identityDropped ? { identityDropped } : {}) } : result
     } catch (err) {
@@ -1932,6 +1959,7 @@ export class SlackConnection implements PlatformConnection {
         return undefined
       }
       this.streamingUnavailableUntil = 0
+      this.rememberOwnMessageTs(ts)
       // Keyed by MESSAGE, not by conversation: same-(channel, thread) sibling turns coexist on
       // one connection, and a conversation key would let the second open orphan the first.
       this.openStreams.add(streamKey(channel, ts))
@@ -2208,6 +2236,7 @@ export class SlackConnection implements PlatformConnection {
           const m = messages[index]!
           if (!m.ts) continue
           const appId = m.app_id ?? m.bot_profile?.app_id
+          const sender = m.bot_id ?? m.user ?? 'unknown'
           const metadataAuthor =
             m.metadata?.event_type === 'agentconnect_thread_event' &&
             typeof m.metadata.event_payload?.author_agent_id === 'string'
@@ -2222,7 +2251,7 @@ export class SlackConnection implements PlatformConnection {
           out.push({
             // Some Slack bot rows expose both `user` and `bot_id`. Keep the stable bot
             // identity as sender so legacy rows from the same app reconcile consistently.
-            sender: m.bot_id ?? m.user ?? 'unknown',
+            sender,
             ...(metadataAuthor ? { agentAuthorId: metadataAuthor } : {}),
             ...(chromeOwnerAgentId ? { chromeOwnerAgentId } : {}),
             ...(appId ? { appId } : {}),
@@ -2371,6 +2400,7 @@ export class SlackConnection implements PlatformConnection {
         })) as SlackUploadV2Result
         // `uploadV2` answers with one completion response per file, each carrying the FILE.
         const fileId = done?.files?.[0]?.files?.[0]?.id
+        if (fileId) this.rememberOwnFileId(fileId)
         return { ok: true, ...(await this.shareMessageTs(fileId, channel)) }
       } catch (err) {
         this.rememberMissingScopes(err)
@@ -2412,6 +2442,7 @@ export class SlackConnection implements PlatformConnection {
     const fileId = reserved.file_id
     if (!uploadUrl || !fileId) return undefined
     if (!(await this.putUploadBytes(uploadUrl, file))) return undefined
+    this.rememberOwnFileId(fileId)
     // Sharing is what makes the file a message; without `channel_id` it stays a private
     // upload nobody can see. `thread_ts` must be the PARENT's ts, never a reply's.
     // A CAPTION IS MRKDWN HERE, unlike every other send in this file: this method documents
@@ -2533,11 +2564,22 @@ export class SlackConnection implements PlatformConnection {
       // A share is filed under the channel's own visibility, so read both arms by channel id.
       const ts = (shares?.public?.[channel] ?? shares?.private?.[channel])?.[0]?.ts
       if (!ts) this.deps.log?.debug(`slack: uploadFile share of ${fileId} carried no ts for ${channel}`)
+      if (ts) this.rememberOwnMessageTs(ts)
       return ts ? { messageId: ts } : {}
     } catch (err) {
       this.deps.log?.debug(`slack: uploadFile could not read the share ts of ${fileId}: ${(err as Error).message}`)
       return {}
     }
+  }
+
+  private rememberOwnMessageTs(ts: string): void {
+    this.ownMessageTs.add(ts)
+    if (this.ownMessageTs.size > 2_000) this.ownMessageTs.delete(this.ownMessageTs.values().next().value!)
+  }
+
+  private rememberOwnFileId(fileId: string): void {
+    this.ownFileIds.add(fileId)
+    if (this.ownFileIds.size > 2_000) this.ownFileIds.delete(this.ownFileIds.values().next().value!)
   }
 
   /**
