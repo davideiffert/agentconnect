@@ -205,6 +205,9 @@ export interface McpContentResult {
 /** Per-session binding captured at `session/new`, keyed by the IPC token. */
 export interface SessionContext {
   agentId: string
+  /** Exact daemon session key captured at session/new. Some platform session
+   * coordinates cannot be reconstructed from the public context fields alone. */
+  sessionKey?: string
   /** The platform that triggered this session (slack/telegram/…). Trusted — set
    *  by the daemon from the real triggering message, never a tool input. Used to
    *  build the coords for peer-discovery (`listAgents`). */

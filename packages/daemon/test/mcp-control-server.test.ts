@@ -168,22 +168,24 @@ describe('McpControlServer IPC', () => {
       channel: 'D0123456',
       thread: '1760961600.000001'
     }
+    const requesterIdentityFor = vi.fn(() => requester)
     server = new McpControlServer(
       controlDeps({
         socketPath: path,
         gatewayFor: gateway,
         recordOutbound: async () => {},
         now: () => 0,
-        requesterIdentityFor: () => requester
+        requesterIdentityFor
       })
     )
     await server.start()
-    const token = server.register(ctx({ tools: [] }))
+    const token = server.register(ctx({ tools: [], sessionKey: 'slack:C1:session:bot-a' }))
 
     await expect(rpc(path, { token, op: 'requesterIdentity' })).resolves.toMatchObject({
       ok: true,
       result: requester
     })
+    expect(requesterIdentityFor).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'slack:C1:session:bot-a' }))
     await expect(rpc(path, { token, op: 'listTools' })).resolves.toMatchObject({
       ok: true,
       result: { tools: [] }
