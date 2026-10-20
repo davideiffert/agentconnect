@@ -14,7 +14,7 @@ function fixture(messages: { text?: string }[] = []) {
     integrations: [integration]
   })
   const events = new Map<string, Parameters<AppLike['event']>[1]>()
-  const app = fakeSlackAppFactory()({ token: 'xoxb-test', appToken: 'xapp-test' })
+  const app = fakeSlackAppFactory()({ token: 'xoxb-test', appToken: 'xapp-test', ignoreSelf: false })
   const history = vi.fn(async () => ({ messages }))
   const postMessage = vi.fn(async (body: unknown) => {
     messages.push(body as { text?: string })
