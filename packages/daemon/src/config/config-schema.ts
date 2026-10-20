@@ -51,6 +51,9 @@ export const McpServerDefSchema = z
     command: z.string().optional(),
     args: z.array(z.string()).default([]),
     env: NameValueList,
+    // Give this trusted local stdio child the session socket and token so it can
+    // resolve the live requester without accepting identity from tool arguments.
+    requesterIdentity: z.boolean().optional(),
     // Same trusted installation-root escape hatch as RuntimeDefSchema, for a
     // daemon-configured stdio MCP child spawned by the runtime.
     readRoots: z.array(z.string()).optional(),
@@ -70,6 +73,12 @@ export const McpServerDefSchema = z
       ctx.addIssue({ code: 'custom', path: ['command'], message: 'a stdio MCP server requires "command"' })
     if (def.transport !== 'stdio' && !def.url)
       ctx.addIssue({ code: 'custom', path: ['url'], message: `a ${def.transport} MCP server requires "url"` })
+    if (def.requesterIdentity === true && def.transport !== 'stdio')
+      ctx.addIssue({
+        code: 'custom',
+        path: ['requesterIdentity'],
+        message: 'requester identity requires stdio transport'
+      })
   })
 export type McpServerDef = z.infer<typeof McpServerDefSchema>
 

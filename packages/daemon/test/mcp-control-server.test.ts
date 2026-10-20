@@ -158,6 +158,55 @@ describe('McpControlServer IPC', () => {
     expect(res.error).toMatch(/token/)
   })
 
+  it('returns trusted requester identity without listing a model tool', async () => {
+    const path = socketPath()
+    const requester = {
+      platform: 'slack',
+      integrationId: 'int-1',
+      teamId: 'T0123456',
+      userId: 'U0123456',
+      channel: 'D0123456',
+      thread: '1760961600.000001'
+    }
+    server = new McpControlServer(
+      controlDeps({
+        socketPath: path,
+        gatewayFor: gateway,
+        recordOutbound: async () => {},
+        now: () => 0,
+        requesterIdentityFor: () => requester
+      })
+    )
+    await server.start()
+    const token = server.register(ctx({ tools: [] }))
+
+    await expect(rpc(path, { token, op: 'requesterIdentity' })).resolves.toMatchObject({
+      ok: true,
+      result: requester
+    })
+    await expect(rpc(path, { token, op: 'listTools' })).resolves.toMatchObject({
+      ok: true,
+      result: { tools: [] }
+    })
+  })
+
+  it('returns null when the live turn has no human requester', async () => {
+    const path = socketPath()
+    server = new McpControlServer(
+      controlDeps({
+        socketPath: path,
+        gatewayFor: gateway,
+        recordOutbound: async () => {},
+        now: () => 0,
+        requesterIdentityFor: () => null
+      })
+    )
+    await server.start()
+    const token = server.register(ctx({ tools: [] }))
+
+    await expect(rpc(path, { token, op: 'requesterIdentity' })).resolves.toMatchObject({ ok: true, result: null })
+  })
+
   it('rejects the private attach op without affecting ordinary shared bridge requests', async () => {
     const path = socketPath()
     server = new McpControlServer(

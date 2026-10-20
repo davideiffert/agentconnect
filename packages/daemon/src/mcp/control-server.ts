@@ -13,6 +13,16 @@ import { isWindowsNamedPipe } from '../paths.js'
 export interface McpControlDeps extends OpsDeps {
   socketPath: string
   log?: Logger
+  requesterIdentityFor?: (ctx: SessionContext) => RequesterIdentity | null
+}
+
+export interface RequesterIdentity {
+  platform: string
+  integrationId?: string
+  teamId?: string
+  userId: string
+  channel: string
+  thread: string
 }
 
 /** The per-call ask port: the host's answers from an earlier round, and nothing else — the daemon never initiates toward the bridge. */
@@ -120,6 +130,10 @@ export class McpControlServer {
     try {
       if (req.op === 'listTools') {
         reply({ id: req.id, ok: true, result: { tools: ctx.tools as ToolDescriptor[] } })
+        return
+      }
+      if (req.op === 'requesterIdentity') {
+        reply({ id: req.id, ok: true, result: this.deps.requesterIdentityFor?.(ctx) ?? null })
         return
       }
       // Deps, NOT a SessionContext spread: `mcp/ops/memory.ts` keys its provenance ledger by the context IDENTITY from the sessions map, so a per-call copy would orphan it.
