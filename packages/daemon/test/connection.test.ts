@@ -1267,6 +1267,7 @@ describe('SlackConnection assistant DM threads', () => {
     const conn = new SlackConnection(
       {
         ...deps(),
+        sendIntervalMs: 0,
         onMessage: (msg: unknown) => delivered.push(msg)
       } as any,
       () =>
@@ -1321,12 +1322,13 @@ describe('SlackConnection assistant DM threads', () => {
     })
   })
 
-  it('ignores structural and Slack system events while retaining human and peer-bot chat', async () => {
+  it('ignores structural, system, and owned posts while retaining human, peer-bot, and external same-token chat', async () => {
     let messageHandler!: (a: { message: unknown }) => unknown
     const delivered: any[] = []
     const conn = new SlackConnection(
       {
         ...deps(),
+        sendIntervalMs: 0,
         onMessage: (msg: unknown) => delivered.push(msg)
       } as any,
       () =>
@@ -1341,6 +1343,7 @@ describe('SlackConnection assistant DM threads', () => {
           view() {},
           client: {
             auth: { test: async () => ({ user_id: 'UBOT', bot_id: 'BSELF' }) },
+            chat: { postMessage: async () => ({ ts: '1727484109.550000' }) },
             views: { open: async () => {}, update: async () => {} }
           },
           start: async () => {},
@@ -1349,6 +1352,7 @@ describe('SlackConnection assistant DM threads', () => {
     )
 
     await conn.start()
+    await conn.postMessage('C1', 'unmarked owned post')
     await messageHandler({
       message: {
         type: 'message',
@@ -1461,7 +1465,27 @@ describe('SlackConnection assistant DM threads', () => {
     })
     const botMessage = { type: 'message', subtype: 'bot_message', channel: 'C1' }
     await messageHandler({
-      message: { ...botMessage, ts: '1727484109.500000', bot_id: 'BSELF', text: 'self echo' }
+      message: { ...botMessage, ts: '1727484109.550000', bot_id: 'BSELF', text: 'unmarked owned post' }
+    })
+    await messageHandler({
+      message: {
+        ...botMessage,
+        ts: '1727484109.500000',
+        bot_id: 'BSELF',
+        text: 'self echo',
+        metadata: {
+          event_type: 'agentconnect_thread_event',
+          event_payload: { author_agent_id: 'bot-a' }
+        }
+      }
+    })
+    await messageHandler({
+      message: {
+        ...botMessage,
+        ts: '1727484109.600000',
+        bot_id: 'BSELF',
+        text: 'Hub reminder <https://hub.test/tasks/42|task>'
+      }
     })
     await messageHandler({
       message: { ...botMessage, ts: '1727484110.000000', bot_id: 'BPEER', text: 'peer bot update' }
@@ -1472,6 +1496,7 @@ describe('SlackConnection assistant DM threads', () => {
       'see attachment',
       'also send to channel',
       'is checking the deployment',
+      'Posted as you by another system at 2024-09-28T00:41:49.600Z:\nHub reminder <https://hub.test/tasks/42|task>',
       'peer bot update'
     ])
   })
