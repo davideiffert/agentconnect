@@ -382,12 +382,14 @@ describe('mcp-bridge end-to-end (real stdio MCP handshake)', () => {
             response = { id: request.id, ok: false, error: 'control plane offline' }
           } else if (request.op === 'listTools') {
             response = { id: request.id, ok: true, result: { tools } }
-          } else {
+          } else if (request.op === 'callTool') {
             response = {
               id: request.id,
               ok: true,
               result: { mcpContent: errorContent.get(request.name), mcpIsError: true }
             }
+          } else {
+            response = { id: request.id, ok: true, result: null }
           }
           socket.write(encodeFrame(response))
         }
