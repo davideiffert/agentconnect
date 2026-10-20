@@ -67,6 +67,16 @@ const deps = () => ({
 })
 
 describe('SlackConnection initialization', () => {
+  it('lets same-token events reach AgentConnect own-post filtering', () => {
+    let options: Parameters<import('../src/slack/connection.js').SlackAppFactory>[0] | undefined
+    new SlackConnection(deps() as any, (received) => {
+      options = received
+      return fakeAppWith() as any
+    })
+
+    expect(options).toMatchObject({ ignoreSelf: false })
+  })
+
   it('constructs the Bolt v5 Socket Mode receiver', () => {
     expect(() => new SlackConnection(deps() as any)).not.toThrow()
   })

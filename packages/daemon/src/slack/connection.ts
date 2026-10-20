@@ -1022,10 +1022,10 @@ function sendOnlyApp(botToken: string): AppLike {
 
 /** Builds the Slack app a connection drives. The default reaches slack.com; daemon tests inject an
  *  inert one so a unit suite never depends on Slack being reachable. */
-export type SlackAppFactory = (opts: { token: string; appToken: string }) => AppLike
+export type SlackAppFactory = (opts: { token: string; appToken: string; ignoreSelf: false }) => AppLike
 
 /** The production socket-mode app: a real Bolt/`WebClient` pair that reaches slack.com. */
-function realSocketModeApp(o: { token: string; appToken: string }, boltDebug?: boolean): AppLike {
+function realSocketModeApp(o: { token: string; appToken: string; ignoreSelf: false }, boltDebug?: boolean): AppLike {
   // Route Slack API calls and WebSocket connections through HTTPS_PROXY/HTTP_PROXY when configured.
   const dispatcher = proxyDispatcher()
   const clientOptions: WebClientOptions = {
@@ -1045,6 +1045,9 @@ function realSocketModeApp(o: { token: string; appToken: string }, boltDebug?: b
     token: o.token,
     receiver,
     clientOptions,
+    // AgentConnect owns the finer distinction between its marked/recent posts and
+    // same-token posts made by another system. Bolt's blanket filter cannot.
+    ignoreSelf: o.ignoreSelf,
     // Bolt v5 otherwise starts token verification from its constructor without
     // an awaitable lifecycle. start() calls init() before opening the socket.
     deferInitialization: true,
@@ -1136,10 +1139,13 @@ export class SlackConnection implements PlatformConnection {
     // An injected factory wins in BOTH modes: send-only otherwise hard-coded `sendOnlyApp`, whose
     // `auth.test()` reaches Slack, which left injected tests network-dependent on that path.
     this.app = factory
-      ? factory({ token: deps.group.botToken, appToken: deps.group.appToken })
+      ? factory({ token: deps.group.botToken, appToken: deps.group.appToken, ignoreSelf: false })
       : deps.sendOnly
         ? sendOnlyApp(deps.group.botToken)
-        : realSocketModeApp({ token: deps.group.botToken, appToken: deps.group.appToken }, deps.boltDebug)
+        : realSocketModeApp(
+            { token: deps.group.botToken, appToken: deps.group.appToken, ignoreSelf: false },
+            deps.boltDebug
+          )
     this.queue = new PlatformSendQueue(deps.sendIntervalMs ?? 350)
   }
 
