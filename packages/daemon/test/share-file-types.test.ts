@@ -48,3 +48,21 @@ describe('sharedFileKind', () => {
     expect(sharedFileKind('out/', Buffer.from('x'))).toMatchObject({ name: 'file' })
   })
 })
+
+// BC fork: the documents Henry shares into Slack must keep posting as typed documents under their own names.
+describe('documents Henry shares', () => {
+  it.each([
+    ['out/Agenda.pdf', '%PDF-1.7', 'application/pdf'],
+    ['out/Notes.docx', 'PK\u0003\u0004word', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['out/Deck.pptx', 'PK\u0003\u0004ppt', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+    ['out/Budget.xlsx', 'PK\u0003\u0004xl', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['out/Roster.csv', 'name,role\nAna,lead\n', 'text/csv'],
+    ['out/Summary.txt', 'plain words', 'text/plain']
+  ])('%s posts as a document typed %s', (path, body, mimeType) => {
+    expect(sharedFileKind(path, Buffer.from(body, 'latin1'))).toEqual({
+      kind: 'document',
+      name: path.split('/').pop(),
+      mimeType
+    })
+  })
+})
