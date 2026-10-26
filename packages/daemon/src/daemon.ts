@@ -10985,12 +10985,20 @@ export class Daemon {
     return this.activeGateEntries.get(this.sessionKeyOf(ctx))
   }
 
-  /** Identity of the human behind the live turn. Scheduled and agent turns have no requester. */
+  /** Identity of the human behind the live turn. Scheduled and agent turns have no requester, and
+   *  neither has a turn that folded in a message from anyone else (or from no person at all). */
   private requesterIdentityFor(ctx: SessionContext) {
     const live = ctx.sessionKey ? this.activeGateEntries.get(ctx.sessionKey) : this.liveTurn(ctx)
     const msg = live?.msg
     if (!msg || msg.source !== 'user' || msg.sender.isBot || !msg.sender.id) return null
     const integrationId = live.integrationId ?? ctx.integrationId
+    const head = askerOf(this.turnMessageOf(live), integrationId)
+    if (!head) return null
+    const headKey = askerKey(head)
+    for (const folded of live.foldedMessages ?? []) {
+      const asker = askerOf(folded, integrationId)
+      if (!asker || askerKey(asker) !== headKey) return null
+    }
     const connection = integrationId ? this.anyConnForIntegration(integrationId) : undefined
     const workspaceId =
       msg.platform === 'slack' && connection && 'workspaceId' in connection
