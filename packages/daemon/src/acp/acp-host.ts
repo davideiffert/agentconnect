@@ -968,9 +968,12 @@ export class AcpHost {
     return this.isClaudeRuntime() || this.canUseCustomInstructions
   }
 
-  /** Whether `session/load` applies the native standing instructions it carries; custom instructions apply only when a thread starts. */
+  /** Whether `session/load` applies the native standing instructions it carries; custom instructions apply only when a thread starts.
+   *  Claude does not either (BC fork, 2026-10-27): a resumed Claude session kept the instructions it was created with,
+   *  so a changed description never reached a long DM until `!new`. Answering false makes the session manager restate
+   *  changed standing context inline on the next turn, and only when its digest actually changed. */
   appliesSystemPromptOnLoad(): boolean {
-    return this.isClaudeRuntime()
+    return false
   }
 
   private sessionMeta(
