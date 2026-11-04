@@ -1320,13 +1320,17 @@ describe('follow-up tool text', () => {
       ...followUp,
       origin: { platform: 'slack', channel: 'C1', transportScope: null },
       replyThread: '1792723298.361329'
-    } as unknown as AssistantItem
-    expect(checkPrompt(taken, { itemId: 'item-1', nextCheck: 0 })).toContain(
+    } as unknown as CheckedTask
+    expect(checkPrompt(taken, { taskKey: 'slack:C1:subsession:check-1:bot-a', nextCheck: 0 })).toContain(
       'Taken in: slack channel C1, thread 1792723298.361329. Read it yourself for what has happened there since'
     )
-    const noThread = { ...taken, replyThread: null } as unknown as AssistantItem
-    expect(checkPrompt(noThread, { itemId: 'item-1', nextCheck: 0 })).toContain('Taken in: slack channel C1. ')
-    expect(checkPrompt(followUp, { itemId: 'item-1', nextCheck: 0 })).not.toContain('Taken in:')
+    const noThread = { ...taken, replyThread: null } as unknown as CheckedTask
+    expect(checkPrompt(noThread, { taskKey: 'slack:C1:subsession:check-1:bot-a', nextCheck: 0 })).toContain(
+      'Taken in: slack channel C1. '
+    )
+    expect(checkPrompt(followUp, { taskKey: 'slack:C1:subsession:check-1:bot-a', nextCheck: 0 })).not.toContain(
+      'Taken in:'
+    )
   })
 
   it('asks a check to write in the language of the people in its conversation', () => {
