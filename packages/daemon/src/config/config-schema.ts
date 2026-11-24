@@ -273,13 +273,16 @@ export const ConfigSchema = z.object({
       // Steer a message into the live turn over `_session/steering` instead of queueing it.
       sessionSteering: z.boolean().default(true),
       // Run the `auto` session mode and advertise it (auto-session-mode.md §3.1); off routes `auto` as Per thread and keeps every session's task tools.
-      autoSessionMode: z.boolean().default(true)
+      autoSessionMode: z.boolean().default(true),
+      // BC fork: keep `auto` rooms on their configured trigger (e.g. mention-only in channels, any in DMs) instead of injecting an Any rule for every channel.
+      autoRespectMentionTrigger: z.boolean().default(false)
     })
     .default({
       turnFinalContextRefresh: true,
       sessionSteering: true,
       ahp: { mode: 'on' },
-      autoSessionMode: true
+      autoSessionMode: true,
+      autoRespectMentionTrigger: false
     }),
   sessions: z
     .object({

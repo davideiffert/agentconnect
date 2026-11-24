@@ -20691,7 +20691,10 @@ export class Daemon {
   /** Local layer (agent.json) ∪ resolved CP layer; unservable CP rules are dropped + warn-logged. */
   private mergedRules(): RoutingRule[] {
     const local = [...this.agents.values()].flatMap((a) =>
-      rulesFromAgent(a, this.botUserIds, { autoSessionMode: this.cfg.features.autoSessionMode })
+      rulesFromAgent(a, this.botUserIds, {
+        autoSessionMode: this.cfg.features.autoSessionMode,
+        autoRespectMentionTrigger: this.cfg.features.autoRespectMentionTrigger
+      })
     )
     const cp: RoutingRule[] = []
     for (const cpRule of this.cpRouting?.effectiveRules() ?? []) {

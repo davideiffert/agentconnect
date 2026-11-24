@@ -405,6 +405,109 @@ describe('a Slack DM under auto', () => {
     expect(prompts[1]).toContain('5ea0a980-2f51-545c-8a2a-6c138c2b3dd4')
     await daemon.stop()
   })
+
+  it('keeps mention-only channels silent on unmentioned posts when autoRespectMentionTrigger is enabled', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ac-slack-auto-mention-'))
+    writeFileSync(
+      join(root, 'config.json'),
+      JSON.stringify({
+        version: 1,
+        controlPlane: { enabled: false },
+        runtimes: { claude: { command: 'node', args: [] } },
+        features: { autoSessionMode: true, autoRespectMentionTrigger: true }
+      })
+    )
+    const adir = join(root, 'agents', 'bot-a')
+    mkdirSync(adir, { recursive: true })
+    writeFileSync(
+      join(adir, 'agent.json'),
+      JSON.stringify({
+        id: 'bot-a',
+        name: 'bot-a',
+        status: 'active',
+        runtime: 'claude',
+        workspace: { mode: 'from-scratch', path: join(adir, 'workspace') },
+        integrations: [
+          {
+            id: 'int-bot-a',
+            platform: 'slack',
+            core: {
+              bindRules: [{ match: { kind: 'mention' } }, { match: { kind: 'dm' } }],
+              sessionModes: [
+                { channel: 'C1', mode: 'auto' },
+                { channel: 'D1', mode: 'auto' }
+              ]
+            },
+            config: { botToken: 'xoxb', appToken: 'xapp' }
+          }
+        ],
+        output: { mode: 'low' }
+      })
+    )
+    const handlers = new Map<string, Handler>()
+    const base = fakeSlackAppFactory({ userId: 'U0BOT' })
+    const factory: SlackAppFactory = (opts) => {
+      const app = base(opts) as unknown as Record<string, unknown>
+      app.message = (fn: Handler) => handlers.set('message', fn)
+      app.event = (type: string, fn: Handler) => handlers.set(type, fn)
+      return app as unknown as ReturnType<SlackAppFactory>
+    }
+    const host = {
+      __started: true,
+      start: vi.fn(async () => {}),
+      newSession: vi.fn(async () => 'acp-1'),
+      hasSession: () => true,
+      prompt: vi.fn(async () => ({ stopReason: 'end_turn' })),
+      cancel: vi.fn(),
+      stop: vi.fn()
+    }
+    const daemon = new Daemon({ root, slackAppFactory: factory, hostFactory: () => host as never })
+    await daemon.start()
+    ;(daemon as unknown as { bindSessionSource: () => Promise<string> }).bindSessionSource = async () => 'unchanged'
+    try {
+      // Unmentioned post in C1 must not wake the coordinator.
+      await handlers.get('message')!({
+        message: {
+          type: 'message',
+          channel: 'C1',
+          channel_type: 'channel',
+          user: 'U1',
+          text: 'hey team',
+          ts: '1720000100.000100'
+        }
+      })
+      await new Promise((r) => setTimeout(r, 80))
+      expect(host.prompt).toHaveBeenCalledTimes(0)
+
+      // Mention in C1 wakes the coordinator.
+      await handlers.get('message')!({
+        message: {
+          type: 'message',
+          channel: 'C1',
+          channel_type: 'channel',
+          user: 'U1',
+          text: '<@U0BOT> can you check this?',
+          ts: '1720000100.000200'
+        }
+      })
+      await vi.waitFor(() => expect(host.prompt).toHaveBeenCalledTimes(1))
+
+      // 1:1 DM still wakes without a mention.
+      await handlers.get('message')!({
+        message: {
+          type: 'message',
+          channel: 'D1',
+          channel_type: 'im',
+          user: 'U1',
+          text: 'hi in dm',
+          ts: '1720000100.000300'
+        }
+      })
+      await vi.waitFor(() => expect(host.prompt).toHaveBeenCalledTimes(2))
+    } finally {
+      await daemon.stop()
+    }
+  })
 })
 
 describe('a Slack DM on createNew', () => {

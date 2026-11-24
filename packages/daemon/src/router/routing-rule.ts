@@ -184,13 +184,13 @@ function autoConversationRules(int: Integration, routing: ReturnType<typeof inte
 export function rulesFromAgent(
   agent: Agent,
   botUserIds: Record<string, string>,
-  opts: { autoSessionMode?: boolean } = {}
+  opts: { autoSessionMode?: boolean; autoRespectMentionTrigger?: boolean } = {}
 ): RoutingRule[] {
   const out: RoutingRule[] = []
   for (const int of agent.integrations) {
     const routing = integrationRouting(int)
     const { staticBotUserId, mutedChannels } = routing
-    const auto = opts.autoSessionMode && !agent.coordinatorDisabled
+    const auto = opts.autoSessionMode && !agent.coordinatorDisabled && !opts.autoRespectMentionTrigger
     const bindRules = [...routing.bindRules, ...(auto ? autoConversationRules(int, routing) : [])]
     const botUserId = botUserIds[int.id] ?? staticBotUserId ?? ''
     for (const br of bindRules) {
