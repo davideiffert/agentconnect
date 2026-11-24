@@ -602,6 +602,10 @@ type MessageShortcutArgs = {
   }
 }
 
+/** BC: the meeting recorder DM's "Review and post" button. */
+export const BC_MEETING_REVIEW_ACTION = 'bc_meeting_review'
+const BC_RECORDING_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /** The clicking user off a `block_actions` payload, for the action's audit record. */
 function actorOf(body: BlockActionArgs['body']): InteractionActor | undefined {
   const user = body?.user
@@ -1526,6 +1530,31 @@ export class SlackConnection implements PlatformConnection {
       const ev = event as SlackMessageEvent
       if (!ev.channel) return
       deliver(ev, 'app_mention', body)
+    })
+    // BC: the meeting recorder's DM carries a "Review and post" button (action `bc_meeting_review`,
+    // value = the recording id). A tap is that person asking, in their own DM, to review and post
+    // the meeting, so it enters exactly like a typed DM from them: same requester checks, and a live
+    // turn where Henry can show the meeting form. Only in a DM, only a recording id, never a bot.
+    this.app.action(BC_MEETING_REVIEW_ACTION, async ({ ack, action, body }) => {
+      await ack()
+      const user = body?.user?.id
+      const channel = (body as { channel?: { id?: string } } | undefined)?.channel?.id
+      const recordingId = (action as { value?: string }).value
+      if (!user || !channel?.startsWith('D') || !recordingId || !BC_RECORDING_ID.test(recordingId)) return
+      const now = Date.now()
+      const ts = `${Math.floor(now / 1000)}.${String(now % 1000).padStart(3, '0')}000`
+      deliver(
+        {
+          type: 'message',
+          channel,
+          channel_type: 'im',
+          user,
+          ts,
+          text: `Review and post the meeting from recording ${recordingId}. Show me the form to check the title and who can see it.`
+        } as SlackMessageEvent,
+        'bc_meeting_review',
+        body
+      )
     })
     // An Assistant DM thread names its root here (message.im stays the source of user text).
     this.app.event('assistant_thread_started', async ({ event }) => {
