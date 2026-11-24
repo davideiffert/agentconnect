@@ -31,7 +31,7 @@ describe('promptSuggestionOf', () => {
 
 describe('SlackConnection.setDmSuggestedPrompt', () => {
   function fixture() {
-    const app = fakeSlackAppFactory()({ token: 'xoxb-test', appToken: 'xapp-test' })
+    const app = fakeSlackAppFactory()({ token: 'xoxb-test', appToken: 'xapp-test', ignoreSelf: false })
     const apiCall = vi.fn(async (_method: string, _args: unknown) => ({}))
     app.client.apiCall = apiCall
     const conn = new SlackConnection(
