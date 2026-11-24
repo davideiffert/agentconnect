@@ -370,6 +370,41 @@ describe('a Slack DM under auto', () => {
     expect(await store.currentAppendCoordinate('bot-a', 'D1', scope)).toBeUndefined()
     await daemon.stop()
   })
+
+  it('keeps an external same-token DM post as silent context in the coordinator without starting a turn', async () => {
+    const { daemon, host, answers, dm, sameTokenPost, prompts, store, scope } = await boot('auto')
+
+    await dm('1720000000.000100', 'first')
+    await vi.waitFor(() => expect(host.prompt).toHaveBeenCalledTimes(1))
+    const coordBefore = await store.currentAppendCoordinate('bot-a', 'D1', scope)
+    expect(isCoordinatorCoordinate(coordBefore)).toBe(true)
+
+    await sameTokenPost(
+      '1720000000.000200',
+      'Hub reminder: <https://hub.test/tasks/5ea0a980-2f51-545c-8a2a-6c138c2b3dd4|Confirm volunteer lunch headcount>'
+    )
+    await vi.waitFor(async () =>
+      expect(
+        await store.db
+          .prepare(
+            "SELECT t.text, r.sessionKey FROM transcript t JOIN transcript_recipient r ON r.seq = t.seq WHERE t.ts = '1720000000.000200'"
+          )
+          .get()
+      ).toMatchObject({
+        text: expect.stringContaining('Posted as you by another system'),
+        sessionKey: sessionKey('slack', 'D1', coordBefore!, 'bot-a', scope)
+      })
+    )
+    // No extra turn or outbound message was triggered by the external system post.
+    expect(host.prompt).toHaveBeenCalledTimes(1)
+    expect(answers()).toHaveLength(0)
+
+    await dm('1720000000.000300', 'what did Hub just remind me about?')
+    await vi.waitFor(() => expect(host.prompt).toHaveBeenCalledTimes(2))
+    expect(prompts[1]).toContain('Posted as you by another system')
+    expect(prompts[1]).toContain('5ea0a980-2f51-545c-8a2a-6c138c2b3dd4')
+    await daemon.stop()
+  })
 })
 
 describe('a Slack DM on createNew', () => {

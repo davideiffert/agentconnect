@@ -1052,7 +1052,11 @@ export class SessionManager {
         // A coordinator turn reads its whole batch, each message under its own id (auto-session-mode.md §4.3).
         const batchTs = new Set([ts, ...options.coordinatorBatch.ts])
         // A runtime session recreated without its history reads the conversation before the batch first, as any session does.
-        const before = opened.historyLost ? context.filter((entry) => !batchTs.has(entry.ts)) : []
+        // BC fork: also surface silent external same-token posts admitted since the last turn (e.g. BC Hub / meeting-followup DMs).
+        const before = context.filter(
+          (entry) =>
+            !batchTs.has(entry.ts) && (opened.historyLost || entry.text.startsWith('Posted as you by another system'))
+        )
         if (before.length > 0) blocks.push({ type: 'text', text: `${plan.head}\n${renderContext(before)}` })
         blocks.push({ type: 'text', text: options.coordinatorBatch.prompt })
         contextEvents = [...context.map((entry) => ({ ts: entry.ts, text: entry.text })), { ts, text: msg.text }]

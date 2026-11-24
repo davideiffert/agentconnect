@@ -179,4 +179,99 @@ describe('trusted requester over the real control socket (BC fork)', () => {
       await expect(rpc(endpoint, token)).resolves.toMatchObject({ ok: true, result: { userId: 'U0ALICE' } })
     })
   })
+
+  it('preserves the real human requester when an auto-mode coordinator delegates a Slack DM to a threaded task', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ac-requester-auto-'))
+    const DM = 'D0DM'
+    writeFileSync(
+      join(root, 'config.json'),
+      JSON.stringify({
+        version: 1,
+        controlPlane: { enabled: false },
+        features: { autoSessionMode: true },
+        runtimes: { claude: { command: 'node', args: [] } },
+        mcpServers: { hub: { transport: 'stdio', command: 'node', args: ['hub.js'], requesterIdentity: true } }
+      })
+    )
+    const adir = join(root, 'agents', AGENT)
+    mkdirSync(adir, { recursive: true })
+    writeFileSync(
+      join(adir, 'agent.json'),
+      JSON.stringify({
+        id: AGENT,
+        name: AGENT,
+        status: 'active',
+        runtime: 'claude',
+        workspace: { mode: 'from-scratch', path: join(adir, 'workspace') },
+        mcpServers: ['hub'],
+        integrations: [
+          {
+            id: INT,
+            platform: 'slack',
+            core: {
+              bindRules: [{ match: { kind: 'dm' } }],
+              sessionModes: [{ channel: DM, mode: 'auto' }]
+            },
+            config: { botToken: 'xoxb-test', appToken: 'xapp-test' }
+          }
+        ],
+        output: { mode: 'low' }
+      })
+    )
+    const rt = hangingHost()
+    const daemon = new Daemon({
+      slackAppFactory: fakeSlackAppFactory({ userId: BOT_USER, botId: 'B0BOT', teamId: 'T0CHURCH' }),
+      root,
+      hostFactory: () => rt.host as any
+    })
+    await daemon.start()
+    const d = daemon as any
+    try {
+      const ts = '1700000100.000100'
+      const dmMsg: NormalizedMessage = {
+        msgId: `slack:${DM}:${ts}`,
+        traceId: randomUUID(),
+        source: 'user',
+        platform: 'slack',
+        channel: DM,
+        thread: ts,
+        sender: { id: 'U0ALICE', isBot: false, name: 'Alice' },
+        text: 'check my open Hub tasks',
+        mentionedBots: [],
+        isDm: true
+      }
+      // Route the DM into the auto coordinator, wait for its turn to open, then delegate to a threaded task.
+      void d.onInboundOutcome(dmMsg, [INT])
+      await vi.waitFor(() => expect(rt.host.prompt).toHaveBeenCalledTimes(1), WAIT)
+      const scope = d.transportScopeForIntegrationIds([INT])
+      const coordThread = await d.store.currentAppendCoordinate(AGENT, DM, scope)
+      const result = await d.coordinators.decide(
+        {
+          agentId: AGENT,
+          platform: 'slack',
+          channel: DM,
+          thread: coordThread,
+          integrationId: INT,
+          transportScope: scope
+        },
+        {
+          action: 'delegateTask',
+          messageId: `msg-${ts}`,
+          title: 'Check open Hub tasks',
+          message: 'Look up Alice open tasks in BC Hub'
+        }
+      )
+      expect(result).toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(rt.host.prompt).toHaveBeenCalledTimes(2), WAIT)
+      const { endpoint, token } = hubBinding(rt.sessions)
+      await expect(rpc(endpoint, token)).resolves.toMatchObject({
+        ok: true,
+        result: { platform: 'slack', integrationId: INT, userId: 'U0ALICE', channel: DM }
+      })
+    } finally {
+      rt.releaseAll()
+      await daemon.stop()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
