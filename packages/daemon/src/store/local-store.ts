@@ -9131,6 +9131,15 @@ export class LocalStore {
     return out
   }
 
+  /** Every cached display name, for the daemon's in-memory person-name map at startup. */
+  async listDisplayNames(): Promise<Map<string, string>> {
+    const rows = (await this.db.prepare(`SELECT id, name FROM display_names`).all()) as unknown as {
+      id: string
+      name: string
+    }[]
+    return new Map(rows.filter((r) => r.name).map((r) => [r.id, r.name]))
+  }
+
   /** Cache a public provider-hosted profile image. Latest-wins as users update avatars. */
   async setProfileAvatar(transportScope: string, id: string, url: string, updatedAt: number): Promise<void> {
     let parsed: URL

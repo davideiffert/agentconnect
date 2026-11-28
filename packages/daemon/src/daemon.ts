@@ -685,7 +685,7 @@ import { createEmailTurnOutput, deliverEmailReply, type EmailTurnHost } from './
 import { TelegramConnection, type TelegramCallback } from './telegram/connection.js'
 import { DiscordConnection } from './discord/connection.js'
 import { FeishuConnection } from './feishu/connection.js'
-import { SlackNameResolver } from './slack/name-resolver.js'
+import { SlackNameResolver, isPersonId, personLabel } from './slack/name-resolver.js'
 import { splitIntoSections } from './slack/formatter.js'
 import {
   integrationConfig,
@@ -2270,6 +2270,8 @@ export class Daemon {
     })()
   // Slack id → display-name resolver (created with the store in start()).
   private nameResolver?: SlackNameResolver
+  /** Slack person id → display name, so a prompt names who sent each message instead of a bare id. */
+  private readonly personNames = new Map<string, string>()
   // agentId → its directory name, learned from `channelAgents` (the listAgents tool)
   // responses. REMOTE agents (hosted on another daemon) aren't in `this.agents`, so this is
   // the only local source for their display name when addressing them in a visible agent-call
@@ -5270,10 +5272,18 @@ export class Daemon {
 
   /** Phase 20 — off-hot-path display-name/channel-name resolution, cached into the store and re-emitted to the CP. */
   private buildNameResolvers(): void {
+    // Warm the person-name map from the store so the first message after a restart is named too.
+    void this.store
+      .listDisplayNames()
+      .then((names) => {
+        for (const [id, name] of names) if (isPersonId(id) && !this.personNames.has(id)) this.personNames.set(id, name)
+      })
+      .catch((err: unknown) => this.log.debug(`person names: warm-up failed: ${(err as Error).message}`))
     // Off-hot-path Slack id → display-name resolution, cached into the store so
     // session read-back can label channels/senders without a live Slack call.
     this.nameResolver = new SlackNameResolver(
       async (id, name) => {
+        if (isPersonId(id)) this.personNames.set(id, name)
         await this.store.setDisplayName(id, name, Date.now())
         await this.sessionMetadataOutbox.emitSessionMetadataSnapshotsForDisplayName(id)
       },
@@ -11640,7 +11650,7 @@ export class Daemon {
   private promptSenderLabel(at: { agentId: string; platform: string; channel: string }, sender: string): string {
     const orgId = this.cpCollab.orgForAgent(at.agentId)
     const mention = orgId ? this.cpCollab.mentionAddress(orgId, at.platform, at.channel, sender) : undefined
-    return mention ? `${sender} (mention: ${mention})` : sender
+    return mention ? `${sender} (mention: ${mention})` : personLabel(sender, this.personNames.get(sender))
   }
 
   /** A coordinator's standing instructions for one conversation, naming the other agents that answer in it (auto-session-mode.md §9). */

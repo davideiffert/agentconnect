@@ -143,3 +143,13 @@ export class SlackNameResolver {
     }
   }
 }
+
+/** A Slack person's user id ("U…" or "W…"), as opposed to a channel, bot or agent id. */
+export function isPersonId(id: string): boolean {
+  return /^[UW][A-Z0-9]{6,}$/.test(id)
+}
+
+/** How a prompt names a message's sender: "Jordan Eiffert (U02LTRR6A)" when the name is known, else the bare id. */
+export function personLabel(sender: string, name: string | undefined): string {
+  return name && isPersonId(sender) ? `${name} (${sender})` : sender
+}
